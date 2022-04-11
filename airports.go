@@ -14,6 +14,7 @@ import (
 	"github.com/golang/geo/s2"
 	alphafoxtrot "github.com/grumpypixel/go-airport-finder"
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 )
 
 type Airport struct {
@@ -45,6 +46,13 @@ func main() {
 	}
 
 	e := echo.New()
+
+	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
+		Skipper: func(c echo.Context) bool {
+			return c.Request().URL.Path == "/" || c.Request().URL.Path == "/__healthz"
+		},
+	}))
+
 	e.GET("/", func(c echo.Context) error {
 		return c.String(http.StatusOK, "location code service")
 	})
