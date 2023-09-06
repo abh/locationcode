@@ -209,7 +209,7 @@ func validateData(dataDir string) {
 	}
 	if downloadFiles {
 		fmt.Println("Downloading CSV files from OurAirports.com...")
-		alphafoxtrot.DownloadDatabase(dataDir)
+		DownloadDatabase(dataDir)
 	}
 }
 
