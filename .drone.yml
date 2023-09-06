@@ -1,10 +1,11 @@
+---
 kind: pipeline
 type: kubernetes
 name: default
 
 steps:
 - name: test
-  image: golang:1.20.3
+  image: golang:1.21.0
   volumes:
   - name: deps
     path: /go
@@ -28,3 +29,8 @@ steps:
       from_secret: harbor_library_username
     password:
       from_secret: harbor_library_password    
+---
+kind: signature
+hmac: 454d074a3b5f6d2400872f4d2c1b368b66f0243a398fa13423d3b904a865fedc
+
+...
