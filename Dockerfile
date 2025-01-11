@@ -1,4 +1,4 @@
-FROM golang:1.21.0-alpine3.18 AS build
+FROM golang:1.23.4-alpine3.21 AS build
 RUN apk --no-cache add git
 
 WORKDIR /go/src/
@@ -6,7 +6,7 @@ ADD . /go/src/
 RUN go install -v ./...
 
 
-FROM alpine:3.18
+FROM alpine:3.21
 USER root
 RUN apk --no-cache add ca-certificates
 RUN apk --no-cache upgrade
