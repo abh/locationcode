@@ -1,20 +1,29 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"path"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/golang/geo/s2"
 	alphafoxtrot "github.com/grumpypixel/go-airport-finder"
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	slogecho "github.com/samber/slog-echo"
+	"go.ntppool.org/common/logger"
+	"go.ntppool.org/common/tracing"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
+	"golang.org/x/sync/errgroup"
 )
 
 type Airport struct {
@@ -29,12 +38,17 @@ type Finder struct {
 }
 
 func main() {
+	log := logger.Setup()
 
-	var dataDir = flag.String("data-dir", "./data", "Data cache directory")
+	dataDir := flag.String("data-dir", "./data", "Data cache directory")
 
 	flag.Parse()
 
-	validateData(*dataDir)
+	err := validateData(*dataDir)
+	if err != nil {
+		log.Error("data error", "err", err)
+		os.Exit(2)
+	}
 
 	finder := &Finder{
 		f: alphafoxtrot.NewAirportFinder(),
@@ -48,7 +62,7 @@ func main() {
 
 	// Load the data into memory
 	if err := finder.f.Load(options, filter); len(err) > 0 {
-		log.Println("errors:", err)
+		log.Error("finder load error", "err", err)
 	}
 
 	if args := flag.Args(); len(args) > 0 {
@@ -76,7 +90,7 @@ func main() {
 			os.Exit(2)
 		}
 
-		airports, err := finder.GetAirports(cc, radiusKM, latitude, longitude)
+		airports, err := finder.GetAirports(context.Background(), cc, radiusKM, latitude, longitude)
 		if err != nil {
 			fmt.Printf("GetAirports error: %s\n", err)
 		}
@@ -88,19 +102,40 @@ func main() {
 		os.Exit(0)
 	}
 
-	e := echo.New()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 
-	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
-		Skipper: func(c echo.Context) bool {
-			return c.Request().URL.Path == "/" || c.Request().URL.Path == "/__healthz"
+	tpShutdown, err := tracing.InitTracer(ctx, &tracing.TracerConfig{
+		ServiceName: "locationcode",
+	})
+	if err != nil {
+		log.Error("could not initialize tracer", "err", err)
+	}
+
+	e := echo.New()
+	e.Use(otelecho.Middleware("locationcode"))
+
+	e.Use(slogecho.NewWithConfig(log,
+		slogecho.Config{
+			WithTraceID:      false, // done by logger already
+			DefaultLevel:     slog.LevelInfo,
+			ClientErrorLevel: slog.LevelWarn,
+			ServerErrorLevel: slog.LevelError,
+			// WithRequestHeader: true,
+
+			Filters: []slogecho.Filter{
+				func(c echo.Context) bool {
+					return !(c.Request().URL.Path == "/" || c.Request().URL.Path == "/__healthz")
+				},
+			},
 		},
-	}))
+	))
 
 	e.GET("/", func(c echo.Context) error {
 		return c.String(http.StatusOK, "location code service")
 	})
 	e.GET("/v1/code", func(c echo.Context) error {
-
+		ctx := c.Request().Context()
 		countryISOCode := c.QueryParam("cc")
 		countryISOCode = strings.ToUpper(countryISOCode)
 
@@ -122,7 +157,7 @@ func main() {
 			return c.String(http.StatusBadRequest, fmt.Sprintf("invalid lat or lng: %s", err))
 		}
 
-		airports, err := finder.GetAirports(countryISOCode, radiusKM, latitude, longitude)
+		airports, err := finder.GetAirports(ctx, countryISOCode, radiusKM, latitude, longitude)
 		if err != nil {
 			return err
 		}
@@ -130,13 +165,35 @@ func main() {
 		return c.JSON(http.StatusOK, airports)
 	})
 
-	e.Logger.Fatal(e.Start(":8000"))
+	errg, ctx := errgroup.WithContext(ctx)
 
+	errg.Go(func() error {
+		return e.Start(":8000")
+	})
+
+	errg.Go(func() error {
+		<-ctx.Done()
+		log.InfoContext(ctx, "shutting down server")
+		return e.Shutdown(ctx)
+	})
+
+	err = errg.Wait()
+	if err != nil {
+		if !errors.Is(err, http.ErrServerClosed) {
+			log.ErrorContext(ctx, "server error", "err", err)
+		}
+	}
+
+	shutdownCtx, shCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shCancel()
+	if err := tpShutdown(shutdownCtx); err != nil {
+		log.ErrorContext(shutdownCtx, "failed to shutdown tracer", "err", err)
+	}
 }
 
-func (f *Finder) GetAirports(cc string, radiusKM, latitude, longitude float64) ([]*Airport, error) {
-
-	log.Printf("GetAirports(%s %.2f %.4f %.4f)", cc, radiusKM, latitude, longitude)
+func (f *Finder) GetAirports(ctx context.Context, cc string, radiusKM, latitude, longitude float64) ([]*Airport, error) {
+	log := logger.FromContext(ctx)
+	log.InfoContext(ctx, fmt.Sprintf("GetAirports(%s %.2f %.4f %.4f)", cc, radiusKM, latitude, longitude))
 
 	ipLocation := s2.LatLngFromDegrees(latitude, longitude)
 
@@ -193,12 +250,12 @@ func (f *Finder) GetAirports(cc string, radiusKM, latitude, longitude float64) (
 		r = r[0:15]
 	}
 
-	fmt.Printf("got %d airports, filtered to %d, returning %d\n", len(airportsRaw), len(airports), len(r))
+	log.InfoContext(ctx, "got airports", "count", len(airportsRaw), "filtered", len(airports), "returning", len(r))
 
 	return r, nil
 }
 
-func validateData(dataDir string) {
+func validateData(dataDir string) error {
 	downloadFiles := false
 	for _, filename := range alphafoxtrot.OurAirportsFiles {
 		filepath := path.Join(dataDir, filename)
@@ -209,8 +266,12 @@ func validateData(dataDir string) {
 	}
 	if downloadFiles {
 		fmt.Println("Downloading CSV files from OurAirports.com...")
-		DownloadDatabase(dataDir)
+		err := DownloadDatabase(dataDir)
+		if err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func getLatLng(c echo.Context) (float64, float64, error) {
