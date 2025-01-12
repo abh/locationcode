@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"path"
-	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -24,14 +23,9 @@ import (
 	"go.ntppool.org/common/tracing"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
 	"golang.org/x/sync/errgroup"
-)
 
-type Airport struct {
-	Name     string
-	Code     string
-	Distance float64
-	data     *alphafoxtrot.Airport
-}
+	"go.askask.com/locationcode/types"
+)
 
 type Finder struct {
 	f *alphafoxtrot.AirportFinder
@@ -191,7 +185,7 @@ func main() {
 	}
 }
 
-func (f *Finder) GetAirports(ctx context.Context, cc string, radiusKM, latitude, longitude float64) ([]*Airport, error) {
+func (f *Finder) GetAirports(ctx context.Context, cc string, radiusKM, latitude, longitude float64) ([]*types.Airport, error) {
 	log := logger.FromContext(ctx)
 	log.InfoContext(ctx, fmt.Sprintf("GetAirports(%s %.2f %.4f %.4f)", cc, radiusKM, latitude, longitude))
 
@@ -215,39 +209,24 @@ func (f *Finder) GetAirports(ctx context.Context, cc string, radiusKM, latitude,
 		airports = append(airports, ap)
 	}
 
-	llCache := map[int]s2.LatLng{}
-	for i, ap := range airports {
-		ll := s2.LatLngFromDegrees(ap.LatitudeDeg, ap.LongitudeDeg)
-		llCache[i] = ll
-	}
+	r := []*types.Airport{}
 
-	r := []*Airport{}
+	for _, airport := range airports {
+		// fmt.Printf("%d %s: %+v\n", i, airport.Name, airport)
 
-	for i, airport := range airports {
-		fmt.Printf("%d %s: %+v\n", i, airport.Name, airport)
+		a := types.NewAirport(airport)
 
-		code := strings.ToLower(airport.Country.ISOCode + airport.IATACode)
+		ll := s2.LatLngFromDegrees(airport.LatitudeDeg, airport.LongitudeDeg)
+		a.Distance = float64(ipLocation.Distance(ll)) * 6371.01
 
-		distance := float64(ipLocation.Distance(llCache[i])) * 6371.01
-
-		a := &Airport{
-			Name:     airport.Name,
-			Code:     code,
-			Distance: distance,
-			data:     airport,
-		}
 		r = append(r, a)
 	}
 
-	sort.Slice(r, func(i, j int) bool {
-		if r[i].data.Type == r[j].data.Type {
-			return r[i].Distance < r[j].Distance
-		}
-		return airports[i].Type < airports[j].Type
-	})
+	types.SortAirports(r)
 
-	if len(r) > 15 {
-		r = r[0:15]
+	maxReturns := 20
+	if len(r) > maxReturns {
+		r = r[0:maxReturns]
 	}
 
 	log.InfoContext(ctx, "got airports", "count", len(airportsRaw), "filtered", len(airports), "returning", len(r))

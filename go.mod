@@ -12,6 +12,7 @@ require (
 	github.com/samber/slog-echo v1.15.0
 	go.ntppool.org/common v0.3.1
 	go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho v0.58.0
+	go.opentelemetry.io/otel v1.33.0
 	golang.org/x/sync v0.10.0
 )
 
@@ -44,7 +45,6 @@ require (
 	go.opentelemetry.io/contrib/bridges/otelslog v0.8.0 // indirect
 	go.opentelemetry.io/contrib/bridges/prometheus v0.58.0 // indirect
 	go.opentelemetry.io/contrib/exporters/autoexport v0.58.0 // indirect
-	go.opentelemetry.io/otel v1.33.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.9.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.9.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.33.0 // indirect
