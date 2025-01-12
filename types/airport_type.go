@@ -12,8 +12,6 @@ type Airport struct {
 	Code     string
 	Distance float64
 	Type     string
-
-	data *alphafoxtrot.Airport
 }
 
 func NewAirport(airport *alphafoxtrot.Airport) *Airport {
@@ -23,7 +21,6 @@ func NewAirport(airport *alphafoxtrot.Airport) *Airport {
 		Name: airport.Name,
 		Code: code,
 		Type: airport.Type,
-		data: airport,
 	}
 
 	return a
@@ -49,9 +46,9 @@ func UniqAirports(r []*Airport) []*Airport {
 
 func SortAirports(r []*Airport) {
 	sort.Slice(r, func(i, j int) bool {
-		if r[i].data.Type == r[j].data.Type {
+		if r[i].Type == r[j].Type {
 			return r[i].Distance < r[j].Distance
 		}
-		return r[i].data.Type < r[j].data.Type
+		return r[i].Type < r[j].Type
 	})
 }
